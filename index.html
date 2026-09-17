@@ -42,10 +42,10 @@
     padding: 10px 12px 8px; background: var(--surface);
     border-bottom: 1px solid var(--line); flex-shrink: 0;
   }
-  .head-left { display: flex; flex-direction: column; }
+  .head-left { display: flex; flex-direction: column; min-width: 0; }
   .head-date { font-size: 15px; font-weight: 600; text-transform: capitalize; }
   .head-count { font-size: 12px; color: var(--text-2); margin-top: 2px; }
-  .head-actions { display: flex; gap: 4px; }
+  .head-actions { display: flex; gap: 2px; flex-shrink: 0; }
   .head-btn {
     background: transparent; border: none; padding: 8px;
     font-size: 20px; color: var(--text-2); cursor: pointer; min-width: 40px;
@@ -201,6 +201,7 @@
     cursor: pointer; font-family: inherit;
   }
   .segment button.active { background: var(--accent); color: #fff; font-weight: 500; }
+  .segment.warn button.active { background: var(--warn); }
 
   .days-check { display: flex; gap: 4px; }
   .day-check {
@@ -308,13 +309,25 @@
     display: flex; align-items: center; gap: 10px; cursor: pointer;
   }
   .p-list-item:active { background: var(--accent-soft); }
+  .p-list-item.paused { opacity: 0.55; }
   .p-list-info { flex: 1; min-width: 0; }
   .p-list-name { font-size: 15px; font-weight: 500; }
   .p-list-meta { font-size: 12px; color: var(--text-2); margin-top: 2px; }
-  .p-list-freq {
-    font-size: 11px; padding: 3px 8px; background: var(--accent-soft);
-    color: var(--accent); border-radius: 10px; font-weight: 600;
+  .p-toggle {
+    background: transparent; border: 1px solid var(--line-2);
+    border-radius: 8px; padding: 6px 10px; font-size: 15px;
+    color: var(--text-2); cursor: pointer; align-self: center;
+    min-width: 42px; flex-shrink: 0;
   }
+  .p-toggle:active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .p-toggle.paused { color: var(--warn); border-color: var(--warn); }
+
+  .dir-summary {
+    padding: 10px 14px; background: var(--surface);
+    border-radius: 10px; margin: 10px 0 4px;
+    font-size: 13px; color: var(--text-2);
+  }
+  .dir-summary strong { color: var(--text); font-weight: 600; }
 
   .toast {
     position: fixed; bottom: calc(90px + var(--safe-bottom));
@@ -352,6 +365,7 @@
       <div class="head-count" id="head-count">0 patient</div>
     </div>
     <div class="head-actions">
+      <button class="head-btn" id="directory-btn" aria-label="Répertoire patients">👥</button>
       <button class="head-btn" id="week-btn" aria-label="Vue semaine">📅</button>
       <button class="head-btn" id="settings-btn" aria-label="Réglages">⚙</button>
     </div>
@@ -397,9 +411,14 @@
         <input type="time" class="field-input" id="set-start" value="08:00">
       </div>
       <div class="field">
-        <label class="field-label">Durée séance (min)</label>
-        <input type="number" class="field-input" id="set-dur" value="20" min="5" max="120" step="5">
+        <label class="field-label">Arrivée cabinet (max)</label>
+        <input type="time" class="field-input" id="set-end" value="13:00">
       </div>
+    </div>
+    <div class="field">
+      <label class="field-label">Durée séance (min)</label>
+      <input type="number" class="field-input" id="set-dur" value="20" min="5" max="120" step="5">
+      <div class="field-help">L'appli te préviendra si la tournée dépasse l'heure d'arrivée cible.</div>
     </div>
     <div class="field">
       <label class="field-label">Arrondi des horaires</label>
@@ -439,6 +458,14 @@
       <div class="field-help" id="pat-addr-help"></div>
     </div>
     <div class="field">
+      <label class="field-label">Statut</label>
+      <div class="segment" id="pat-active">
+        <button data-val="1" class="active">Actif</button>
+        <button data-val="0">En pause</button>
+      </div>
+      <div class="field-help">Un patient en pause reste dans le répertoire mais n'est pas planifié.</div>
+    </div>
+    <div class="field">
       <label class="field-label">Séances par semaine</label>
       <div class="segment" id="pat-freq">
         <button data-val="1" class="active">1×</button>
@@ -472,7 +499,8 @@
       <div class="field-help">Un créneau fixe compte comme une des séances par semaine.</div>
     </div>
     <div id="pat-delete-wrap" style="display:none; margin-top: 24px;">
-      <button class="action-btn destructive" id="pat-delete" style="width:100%; border: 1px solid var(--line-2); border-radius: 12px; text-align: center;">Supprimer ce patient</button>
+      <button class="action-btn destructive" id="pat-delete" style="width:100%; border: 1px solid var(--line-2); border-radius: 12px; text-align: center;">Supprimer définitivement</button>
+      <div class="field-help" style="text-align:center; margin-top:6px;">Si tu veux juste arrêter les séances, mets-le plutôt en pause.</div>
     </div>
   </div>
 </div>
@@ -498,7 +526,8 @@
     <div class="action-list">
       <button class="action-btn" id="act-edit">Modifier le patient</button>
       <button class="action-btn" id="act-nav">Ouvrir dans la navigation</button>
-      <button class="action-btn destructive" id="act-delete">Supprimer ce patient</button>
+      <button class="action-btn" id="act-pause">Mettre en pause</button>
+      <button class="action-btn destructive" id="act-delete">Supprimer définitivement</button>
     </div>
   </div>
 </div>
@@ -511,6 +540,16 @@
     <div style="width: 48px;"></div>
   </div>
   <div class="sheet-body" id="week-body"></div>
+</div>
+
+<div class="sheet" id="directory-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <button class="sheet-cancel" data-close>Fermer</button>
+    <div class="sheet-title">Répertoire</div>
+    <button class="sheet-save" id="dir-add-btn">+ Nouveau</button>
+  </div>
+  <div class="sheet-body" id="directory-body"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -526,6 +565,7 @@ const DEFAULTS = {
     homeAddress: '', homeCoords: null,
     cabAddress: '', cabCoords: null,
     startTime: '08:00',
+    endTime: '13:00',
     sessionDuration: 20,
     roundMinutes: 5,
     navApp: 'waze'
@@ -542,6 +582,7 @@ let pendingPatient = null;
 let map = null, markers = [], routeLine = null;
 let matrixCache = null;
 let renderTicket = 0;
+let dirFilter = '';
 
 function jsWeekdayToBusinessIdx(d) {
   const w = d.getDay();
@@ -556,7 +597,7 @@ function load() {
       const parsed = JSON.parse(raw);
       return {
         settings: { ...DEFAULTS.settings, ...(parsed.settings || {}) },
-        patients: parsed.patients || [],
+        patients: (parsed.patients || []).map(p => ({ active: true, ...p })),
         weekPlan: parsed.weekPlan || [[], [], [], [], []]
       };
     }
@@ -569,7 +610,7 @@ function load() {
           id: p.id, name: p.name, address: p.address, lat: p.lat, lng: p.lng,
           frequency: 1,
           timeConstraint: p.constraint ? { type: p.constraint.type, time: p.constraint.time } : null,
-          unavailableDays: [], pinnedSlots: []
+          unavailableDays: [], pinnedSlots: [], active: true
         })),
         weekPlan: [[], [], [], [], []]
       };
@@ -660,6 +701,7 @@ function escapeHtml(s) {
 }
 function patientById(id) { return state.patients.find(p => p.id === id); }
 function patientIdx(id) { return state.patients.findIndex(p => p.id === id); }
+function activePatients() { return state.patients.filter(p => p.active !== false); }
 
 function computeDaySchedule(orderedVisits, matrix, settings) {
   const cabIdx = matrix.length - 1;
@@ -694,14 +736,17 @@ function computeDaySchedule(orderedVisits, matrix, settings) {
   }
   const cabDrive = matrix[prev][cabIdx] / 60;
   const cabArrive = roundMin(cur + cabDrive, settings.roundMinutes);
-  return { arrives, dayMin: cabArrive - startMin, valid, cabArrive };
+  const endLimit = settings.endTime ? toMin(settings.endTime) : null;
+  const overtime = endLimit !== null && cabArrive > endLimit;
+  if (overtime) valid = false;
+  return { arrives, dayMin: cabArrive - startMin, valid, cabArrive, overtime, overtimeBy: overtime ? cabArrive - endLimit : 0 };
 }
 
 function optimizeDayOrder(dayVisits, matrix, settings) {
-  if (dayVisits.length === 0) return { order: [], dayMin: 0, valid: true, cabArrive: null };
+  if (dayVisits.length === 0) return { order: [], dayMin: 0, valid: true, cabArrive: null, overtime: false, overtimeBy: 0 };
   if (dayVisits.length === 1) {
     const r = computeDaySchedule(dayVisits, matrix, settings);
-    return { order: dayVisits.map((v, i) => ({ ...v, arrive: r.arrives[i] })), dayMin: r.dayMin, valid: r.valid, cabArrive: r.cabArrive };
+    return { order: dayVisits.map((v, i) => ({ ...v, arrive: r.arrives[i] })), dayMin: r.dayMin, valid: r.valid, cabArrive: r.cabArrive, overtime: r.overtime, overtimeBy: r.overtimeBy };
   }
   if (dayVisits.length <= 7) {
     let best = null;
@@ -709,7 +754,7 @@ function optimizeDayOrder(dayVisits, matrix, settings) {
       const r = computeDaySchedule(perm, matrix, settings);
       if (!r.valid) continue;
       if (!best || r.dayMin < best.dayMin) {
-        best = { order: perm.map((v, i) => ({ ...v, arrive: r.arrives[i] })), dayMin: r.dayMin, valid: true, cabArrive: r.cabArrive };
+        best = { order: perm.map((v, i) => ({ ...v, arrive: r.arrives[i] })), dayMin: r.dayMin, valid: true, cabArrive: r.cabArrive, overtime: false, overtimeBy: 0 };
       }
     }
     if (best) return best;
@@ -717,7 +762,7 @@ function optimizeDayOrder(dayVisits, matrix, settings) {
     for (const perm of permutations(dayVisits)) {
       const r = computeDaySchedule(perm, matrix, settings);
       if (!bestInvalid || r.dayMin < bestInvalid.dayMin) {
-        bestInvalid = { order: perm.map((v, i) => ({ ...v, arrive: r.arrives[i] })), dayMin: r.dayMin, valid: false, cabArrive: r.cabArrive };
+        bestInvalid = { order: perm.map((v, i) => ({ ...v, arrive: r.arrives[i] })), dayMin: r.dayMin, valid: false, cabArrive: r.cabArrive, overtime: r.overtime, overtimeBy: r.overtimeBy };
       }
     }
     return bestInvalid;
@@ -752,7 +797,7 @@ function optimizeDayOrder(dayVisits, matrix, settings) {
       }
     }
   }
-  return { order: bestOrder.map((v, i) => ({ ...v, arrive: bestRes.arrives[i] })), dayMin: bestRes.dayMin, valid: bestRes.valid, cabArrive: bestRes.cabArrive };
+  return { order: bestOrder.map((v, i) => ({ ...v, arrive: bestRes.arrives[i] })), dayMin: bestRes.dayMin, valid: bestRes.valid, cabArrive: bestRes.cabArrive, overtime: bestRes.overtime, overtimeBy: bestRes.overtimeBy };
 }
 
 function* permutations(arr) {
@@ -766,7 +811,7 @@ function* permutations(arr) {
 async function planWeek(options = {}) {
   const { respectSpacing = true } = options;
   const matrix = await getMatrix();
-  const patients = state.patients;
+  const patients = activePatients();
   const dayPlans = [[], [], [], [], []];
 
   for (const p of patients) {
@@ -914,9 +959,9 @@ function renderHeader() {
   const fmt = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
   document.getElementById('head-date').textContent = fmt.format(d);
   const totalVisits = state.weekPlan.reduce((s, dp) => s + dp.length, 0);
-  const nP = state.patients.length;
+  const nA = activePatients().length;
   document.getElementById('head-count').textContent =
-    `${nP} patient${nP > 1 ? 's' : ''} • ${totalVisits} séance${totalVisits > 1 ? 's' : ''}/semaine`;
+    `${nA} patient${nA > 1 ? 's' : ''} • ${totalVisits} séance${totalVisits > 1 ? 's' : ''}/semaine`;
 }
 function renderDayTabs() {
   const tabs = document.getElementById('day-tabs');
@@ -963,10 +1008,18 @@ async function renderDayView() {
     mapDiv.className = 'empty';
     mapDiv.textContent = `Aucune séance planifiée pour ${DAYS_FULL[selectedDay].toLowerCase()}`;
     wrap.innerHTML = '';
-    empty.querySelector('h3').textContent = state.patients.length === 0 ? 'Aucun patient' : `Pas de séance ${DAYS_FULL[selectedDay].toLowerCase()}`;
-    empty.querySelector('p').textContent = state.patients.length === 0
-      ? 'Appuie sur + pour ajouter ton premier patient.'
-      : 'Aucune séance ce jour. Consulte la vue semaine (📅) pour l\'ensemble.';
+    const totalPat = state.patients.length;
+    const activeN = activePatients().length;
+    if (totalPat === 0) {
+      empty.querySelector('h3').textContent = 'Aucun patient';
+      empty.querySelector('p').textContent = 'Appuie sur + pour ajouter ton premier patient.';
+    } else if (activeN === 0) {
+      empty.querySelector('h3').textContent = 'Tous en pause';
+      empty.querySelector('p').textContent = 'Ouvre le répertoire (👥) pour réactiver un patient.';
+    } else {
+      empty.querySelector('h3').textContent = `Pas de séance ${DAYS_FULL[selectedDay].toLowerCase()}`;
+      empty.querySelector('p').textContent = 'Consulte la vue semaine (📅) pour l\'ensemble.';
+    }
     wrap.appendChild(empty);
     empty.style.display = '';
     return;
@@ -986,7 +1039,14 @@ async function renderDayView() {
   wrap.innerHTML = '';
   const info = document.createElement('div');
   info.className = 'day-header-info';
-  info.innerHTML = `<span>${DAYS_FULL[selectedDay]}</span><span>Trajet total : <strong>${fmtDur(result.dayMin)}</strong></span>`;
+  const endLimit = state.settings.endTime;
+  let arriveTxt = `Arrivée <strong>${toHHMM(result.cabArrive)}</strong>`;
+  if (result.overtime) {
+    arriveTxt = `<span style="color:var(--danger);">⚠ Arrivée <strong>${toHHMM(result.cabArrive)}</strong> (+${fmtDur(result.overtimeBy)} vs ${endLimit})</span>`;
+  } else if (endLimit) {
+    arriveTxt += ` <span style="color:var(--text-3);">(cible ${endLimit})</span>`;
+  }
+  info.innerHTML = `<span>${DAYS_FULL[selectedDay]} · ${fmtDur(result.dayMin)}</span><span>${arriveTxt}</span>`;
   wrap.appendChild(info);
 
   result.order.forEach((v, i) => {
@@ -1102,7 +1162,7 @@ function openNavigation(p) {
 }
 
 const scrim = document.getElementById('scrim');
-const sheetIds = ['settings-sheet', 'patient-sheet', 'options-sheet', 'actions-sheet', 'week-sheet'];
+const sheetIds = ['settings-sheet', 'patient-sheet', 'options-sheet', 'actions-sheet', 'week-sheet', 'directory-sheet'];
 function openSheet(id) { scrim.classList.add('open'); document.getElementById(id).classList.add('open'); }
 function closeAllSheets() {
   scrim.classList.remove('open');
@@ -1117,6 +1177,7 @@ document.getElementById('settings-btn').addEventListener('click', () => {
   document.getElementById('set-home').value = s.homeAddress || '';
   document.getElementById('set-cab').value = s.cabAddress || '';
   document.getElementById('set-start').value = s.startTime;
+  document.getElementById('set-end').value = s.endTime || '13:00';
   document.getElementById('set-dur').value = s.sessionDuration;
   setSegment('set-round', String(s.roundMinutes));
   setSegment('set-nav', s.navApp);
@@ -1157,6 +1218,9 @@ document.getElementById('settings-save').addEventListener('click', async () => {
   if (homeTyped && !state.settings.homeCoords) { toast('Sélectionne l\'adresse de départ'); return; }
   if (cabTyped && !state.settings.cabCoords) { toast('Sélectionne l\'adresse du cabinet'); return; }
   state.settings.startTime = document.getElementById('set-start').value || '08:00';
+  const endVal = document.getElementById('set-end').value || '13:00';
+  if (toMin(endVal) <= toMin(state.settings.startTime)) { toast('L\'arrivée doit être après le départ'); return; }
+  state.settings.endTime = endVal;
   state.settings.sessionDuration = Math.max(5, parseInt(document.getElementById('set-dur').value, 10) || 20);
   state.settings.roundMinutes = parseInt(document.querySelector('#set-round button.active').dataset.val, 10);
   state.settings.navApp = document.querySelector('#set-nav button.active').dataset.val;
@@ -1239,6 +1303,7 @@ function openPatientSheet(id) {
     renderBlockedDays([]);
     renderPinnedSlots([]);
   }
+  setSegment('pat-active', p && p.active === false ? '0' : '1');
   openSheet('patient-sheet');
 }
 
@@ -1313,6 +1378,7 @@ function collectPatientForm() {
     return { error: 'Sélectionne l\'adresse dans la liste' };
   }
   const frequency = parseInt(document.querySelector('#pat-freq button.active').dataset.val, 10);
+  const active = document.querySelector('#pat-active button.active').dataset.val === '1';
   const consType = document.querySelector('#pat-cons-type button.active').dataset.val;
   const t1 = document.getElementById('pat-cons-time1').value;
   const t2 = document.getElementById('pat-cons-time2').value;
@@ -1339,12 +1405,13 @@ function collectPatientForm() {
   const daysPinned = pinnedSlots.map(s => s.day);
   if (new Set(daysPinned).size !== daysPinned.length) return { error: 'Deux créneaux fixes le même jour' };
 
-  return { name, address: pendingPatient.address, lat: pendingPatient.lat, lng: pendingPatient.lng, frequency, timeConstraint, unavailableDays, pinnedSlots };
+  return { name, address: pendingPatient.address, lat: pendingPatient.lat, lng: pendingPatient.lng, frequency, active, timeConstraint, unavailableDays, pinnedSlots };
 }
 
 document.getElementById('patient-save').addEventListener('click', async () => {
   const data = collectPatientForm();
   if (data.error) { toast(data.error); return; }
+  const wasNew = !editingId;
   if (editingId) {
     const p = patientById(editingId);
     if (!p) return;
@@ -1356,12 +1423,13 @@ document.getElementById('patient-save').addEventListener('click', async () => {
   }
   save();
   closeAllSheets();
-  await runPlanningFlow();
+  await runPlanningFlow(!wasNew);
 });
 
 document.getElementById('pat-delete').addEventListener('click', async () => {
   if (!editingId) return;
-  if (!confirm('Supprimer ce patient ?')) return;
+  const p = patientById(editingId);
+  if (!confirm(`Supprimer définitivement ${p ? p.name : 'ce patient'} du répertoire ?\n\nSi tu veux juste arrêter les séances, mets-le plutôt en pause.`)) return;
   state.patients = state.patients.filter(p => p.id !== editingId);
   invalidateMatrix();
   save();
@@ -1370,20 +1438,26 @@ document.getElementById('pat-delete').addEventListener('click', async () => {
 });
 
 async function runPlanningFlow(silent = false) {
-  if (state.patients.length === 0) {
+  const activeCount = activePatients().length;
+  if (activeCount === 0) {
     state.weekPlan = [[], [], [], [], []];
     save();
     await renderAll();
     return;
   }
-  const body = document.getElementById('options-body');
-  body.innerHTML = '<div class="full-loading"><span class="spinner dark"></span><div>Calcul du planning…</div></div>';
-  openSheet('options-sheet');
+
+  let body;
+  if (!silent) {
+    body = document.getElementById('options-body');
+    body.innerHTML = '<div class="full-loading"><span class="spinner dark"></span><div>Calcul du planning…</div></div>';
+    openSheet('options-sheet');
+  }
 
   let planA, planB;
   try {
     planA = await planWeek({ respectSpacing: true });
   } catch (e) {
+    if (silent) { toast('Calcul impossible : ' + e.message); return; }
     body.innerHTML = `<div class="list-empty"><p>Calcul impossible : ${escapeHtml(e.message)}</p></div>`;
     return;
   }
@@ -1391,24 +1465,23 @@ async function runPlanningFlow(silent = false) {
     planB = await planWeek({ respectSpacing: false });
   } catch { planB = null; }
 
+  if (silent) {
+    applyPlan(planA);
+    await renderAll();
+    return;
+  }
+
   const opts = [{ label: 'Planning avec espacement', plan: planA, tag: 'Recommandé' }];
   if (planB && Math.abs(planB.totalMin - planA.totalMin) > 15 && !plansEqual(planA, planB)) {
     opts.push({ label: 'Alternative sans espacement', plan: planB, tag: 'Plus court', alt: true });
   }
 
-  if (silent) {
-    applyPlan(planA);
-    closeAllSheets();
-    await renderAll();
-    toast('Planning mis à jour');
-    return;
-  }
-
   body.innerHTML = '';
   const summary = document.createElement('div');
   summary.style.cssText = 'font-size:13px;color:var(--text-2);margin-bottom:12px;';
-  const totalVisits = state.patients.reduce((s, p) => s + (p.frequency || 1), 0);
-  summary.innerHTML = `${state.patients.length} patients • ${totalVisits} séance${totalVisits > 1 ? 's' : ''} à placer.<br>Choisis le planning à appliquer :`;
+  const actives = activePatients();
+  const totalVisits = actives.reduce((s, p) => s + (p.frequency || 1), 0);
+  summary.innerHTML = `${actives.length} patient${actives.length > 1 ? 's' : ''} actif${actives.length > 1 ? 's' : ''} • ${totalVisits} séance${totalVisits > 1 ? 's' : ''} à placer.<br>Choisis le planning à appliquer :`;
   body.appendChild(summary);
 
   opts.forEach((o, idx) => {
@@ -1463,8 +1536,17 @@ function openActions(id) {
   document.getElementById('actions-title').textContent = p.name;
   document.getElementById('act-edit').onclick = () => { closeAllSheets(); openPatientSheet(id); };
   document.getElementById('act-nav').onclick = () => { closeAllSheets(); openNavigation(p); };
+  const pauseBtn = document.getElementById('act-pause');
+  pauseBtn.textContent = p.active === false ? 'Réactiver' : 'Mettre en pause';
+  pauseBtn.onclick = async () => {
+    p.active = p.active === false;
+    save();
+    closeAllSheets();
+    toast(p.active ? `${p.name} réactivé` : `${p.name} en pause`);
+    await runPlanningFlow(true);
+  };
   document.getElementById('act-delete').onclick = async () => {
-    if (!confirm(`Supprimer ${p.name} ?`)) return;
+    if (!confirm(`Supprimer définitivement ${p.name} du répertoire ?\n\nSi tu veux juste arrêter les séances, mets-le plutôt en pause.`)) return;
     state.patients = state.patients.filter(x => x.id !== id);
     invalidateMatrix();
     save();
@@ -1485,11 +1567,11 @@ async function renderWeekView() {
   const todayIdx = jsWeekdayToBusinessIdx(new Date());
   const hasSettings = state.settings.homeCoords && state.settings.cabCoords;
   const totalVisits = state.weekPlan.reduce((s, dp) => s + dp.length, 0);
-  const nP = state.patients.length;
+  const nA = activePatients().length;
 
   let totalMin = 0;
   const daySchedules = [];
-  if (hasSettings && nP > 0) {
+  if (hasSettings && nA > 0) {
     try {
       const matrix = await getMatrix();
       for (let d = 0; d < 5; d++) {
@@ -1504,7 +1586,7 @@ async function renderWeekView() {
   const sum = document.createElement('div');
   sum.className = 'wk-summary';
   sum.innerHTML = `
-    <div><strong>${nP}</strong> patient${nP > 1 ? 's' : ''} • <strong>${totalVisits}</strong> séance${totalVisits > 1 ? 's' : ''}/semaine</div>
+    <div><strong>${nA}</strong> patient${nA > 1 ? 's' : ''} actif${nA > 1 ? 's' : ''} • <strong>${totalVisits}</strong> séance${totalVisits > 1 ? 's' : ''}/semaine</div>
     ${totalMin > 0 ? `<div style="margin-top:4px;">Trajet total hebdo : <strong>${fmtDur(totalMin)}</strong></div>` : ''}
   `;
   body.appendChild(sum);
@@ -1514,11 +1596,18 @@ async function renderWeekView() {
   for (let d = 0; d < 5; d++) {
     const col = document.createElement('div');
     col.className = 'wk-col';
+    const day = daySchedules[d] || { order: state.weekPlan[d].map(v => ({ ...v, arrive: null })) };
     const head = document.createElement('div');
     head.className = 'wk-col-head' + (d === todayIdx ? ' today' : '');
-    head.textContent = DAYS_SHORT[d];
+    if (day.overtime) {
+      head.innerHTML = `${DAYS_SHORT[d]} <span style="color:var(--danger);">⚠</span>`;
+      head.title = `Arrivée ${toHHMM(day.cabArrive)} — dépasse de ${fmtDur(day.overtimeBy)}`;
+    } else if (day.cabArrive != null && day.order.length > 0) {
+      head.innerHTML = `${DAYS_SHORT[d]}<br><span style="font-size:9px;font-weight:400;color:var(--text-3);">→${toHHMM(day.cabArrive)}</span>`;
+    } else {
+      head.textContent = DAYS_SHORT[d];
+    }
     col.appendChild(head);
-    const day = daySchedules[d] || { order: state.weekPlan[d].map(v => ({ ...v, arrive: null })) };
     if (day.order.length === 0) {
       const em = document.createElement('div');
       em.className = 'wk-empty'; em.textContent = '—';
@@ -1540,48 +1629,137 @@ async function renderWeekView() {
   }
   body.appendChild(grid);
 
-  const listHead = document.createElement('div');
-  listHead.style.cssText = 'font-size:13px;font-weight:600;color:var(--text-2);margin-top:20px;margin-bottom:6px;';
-  listHead.textContent = `Patients (${nP})`;
-  body.appendChild(listHead);
-
-  const list = document.createElement('div');
-  list.className = 'p-list';
-  state.patients.forEach(p => {
-    const item = document.createElement('div');
-    item.className = 'p-list-item';
-    const meta = [];
-    if (p.timeConstraint) {
-      const c = p.timeConstraint;
-      if (c.type === 'before') meta.push(`avant ${c.time}`);
-      else if (c.type === 'after') meta.push(`après ${c.time}`);
-      else if (c.type === 'between') meta.push(`${c.time}–${c.time2}`);
-    }
-    if ((p.unavailableDays || []).length) meta.push(`sauf ${p.unavailableDays.map(d => DAYS_SHORT[d]).join(', ')}`);
-    if ((p.pinnedSlots || []).length) meta.push(`${p.pinnedSlots.length} fixe(s)`);
-    item.innerHTML = `
-      <div class="p-list-info">
-        <div class="p-list-name">${escapeHtml(p.name)}</div>
-        <div class="p-list-meta">${escapeHtml(meta.join(' • ') || p.address)}</div>
-      </div>
-      <div class="p-list-freq">${p.frequency || 1}×/sem</div>
-    `;
-    item.addEventListener('click', () => { closeAllSheets(); openPatientSheet(p.id); });
-    list.appendChild(item);
-  });
-  body.appendChild(list);
-
-  if (nP > 0) {
+  if (state.patients.length > 0) {
     const replan = document.createElement('button');
     replan.className = 'action-btn';
-    replan.style.cssText = 'width:100%;border:1px solid var(--line-2);border-radius:12px;text-align:center;margin-top:16px;color:var(--accent);';
+    replan.style.cssText = 'width:100%;border:1px solid var(--line-2);border-radius:12px;text-align:center;margin-top:8px;color:var(--accent);background:var(--surface);';
     replan.textContent = 'Recalculer le planning';
     replan.addEventListener('click', async () => {
       closeAllSheets();
       await runPlanningFlow();
     });
     body.appendChild(replan);
+
+    const openDir = document.createElement('button');
+    openDir.className = 'action-btn';
+    openDir.style.cssText = 'width:100%;border:1px solid var(--line-2);border-radius:12px;text-align:center;margin-top:8px;color:var(--text-2);background:transparent;';
+    openDir.textContent = 'Gérer les patients →';
+    openDir.addEventListener('click', () => { closeAllSheets(); openDirectory(); });
+    body.appendChild(openDir);
   }
+}
+
+document.getElementById('directory-btn').addEventListener('click', openDirectory);
+document.getElementById('dir-add-btn').addEventListener('click', () => { closeAllSheets(); openPatientSheet(null); });
+
+function openDirectory() {
+  dirFilter = '';
+  renderDirectory();
+  openSheet('directory-sheet');
+}
+
+function renderDirectory() {
+  const body = document.getElementById('directory-body');
+  body.innerHTML = '';
+
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'field-input';
+  search.placeholder = 'Rechercher un patient…';
+  search.value = dirFilter;
+  search.autocomplete = 'off';
+  search.addEventListener('input', () => {
+    dirFilter = search.value;
+    repopulate();
+  });
+  body.appendChild(search);
+
+  const total = state.patients.length;
+  const nActive = activePatients().length;
+  const nPaused = total - nActive;
+  const summary = document.createElement('div');
+  summary.className = 'dir-summary';
+  if (total === 0) {
+    summary.innerHTML = 'Aucun patient dans le répertoire. Utilise « + Nouveau » en haut à droite.';
+  } else if (nPaused > 0) {
+    summary.innerHTML = `<strong>${nActive}</strong> actif${nActive > 1 ? 's' : ''} • <strong>${nPaused}</strong> en pause`;
+  } else {
+    summary.innerHTML = `<strong>${total}</strong> patient${total > 1 ? 's' : ''} au total`;
+  }
+  body.appendChild(summary);
+
+  const listWrap = document.createElement('div');
+  body.appendChild(listWrap);
+
+  function repopulate() {
+    listWrap.innerHTML = '';
+    const q = dirFilter.trim().toLowerCase();
+    const patients = state.patients
+      .filter(p => !q || p.name.toLowerCase().includes(q) || (p.address || '').toLowerCase().includes(q))
+      .sort((a, b) => {
+        // Actifs d'abord, puis alphabétique
+        const aActive = a.active !== false, bActive = b.active !== false;
+        if (aActive !== bActive) return aActive ? -1 : 1;
+        return a.name.localeCompare(b.name, 'fr');
+      });
+    if (patients.length === 0) {
+      const em = document.createElement('div');
+      em.className = 'list-empty';
+      em.style.padding = '30px 20px';
+      em.innerHTML = q ? '<p>Aucun patient ne correspond.</p>' : '<p>Aucun patient. Utilise « + Nouveau ».</p>';
+      listWrap.appendChild(em);
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'p-list';
+    patients.forEach(p => {
+      const inactive = p.active === false;
+      const item = document.createElement('div');
+      item.className = 'p-list-item' + (inactive ? ' paused' : '');
+      const meta = [];
+      meta.push(`${p.frequency || 1}×/sem`);
+      if (p.timeConstraint) {
+        const c = p.timeConstraint;
+        if (c.type === 'before') meta.push(`avant ${c.time}`);
+        else if (c.type === 'after') meta.push(`après ${c.time}`);
+        else if (c.type === 'between') meta.push(`${c.time}–${c.time2}`);
+      }
+      if ((p.unavailableDays || []).length) meta.push(`sauf ${p.unavailableDays.map(d => DAYS_SHORT[d]).join(', ')}`);
+      if ((p.pinnedSlots || []).length) meta.push(`${p.pinnedSlots.length} fixe(s)`);
+      if (inactive) meta.push('en pause');
+      item.innerHTML = `
+        <div class="p-list-info">
+          <div class="p-list-name">${escapeHtml(p.name)}</div>
+          <div class="p-list-meta">${escapeHtml(meta.join(' • '))}</div>
+        </div>
+        <button class="p-toggle ${inactive ? 'paused' : ''}" title="${inactive ? 'Réactiver' : 'Mettre en pause'}">
+          ${inactive ? '▶' : '⏸'}
+        </button>
+      `;
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.p-toggle')) return;
+        closeAllSheets();
+        openPatientSheet(p.id);
+      });
+      item.querySelector('.p-toggle').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        p.active = inactive;
+        save();
+        toast(p.active ? `${p.name} réactivé` : `${p.name} en pause`);
+        repopulate();
+        // Mettre à jour le résumé aussi
+        const nA = activePatients().length;
+        const nP = state.patients.length - nA;
+        if (nP > 0) summary.innerHTML = `<strong>${nA}</strong> actif${nA > 1 ? 's' : ''} • <strong>${nP}</strong> en pause`;
+        else summary.innerHTML = `<strong>${state.patients.length}</strong> patient${state.patients.length > 1 ? 's' : ''} au total`;
+        await runPlanningFlow(true);
+      });
+      list.appendChild(item);
+    });
+    listWrap.appendChild(list);
+  }
+
+  repopulate();
 }
 
 let toastTimer = null;
