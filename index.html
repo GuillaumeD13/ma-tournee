@@ -633,11 +633,34 @@ const OSRM = 'https://router.project-osrm.org';
 
 async function geocode(query) {
   if (!query || query.length < 3) return [];
-  const url = `${NOMINATIM}?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1&countrycodes=be,fr`;
+  // Point de référence pour biaiser vers la zone de tournée : adresse de départ,
+  // sinon cabinet. Sans point connu, requête libre.
+  const home = state.settings.homeCoords || state.settings.cabCoords;
+  let url = `${NOMINATIM}?q=${encodeURIComponent(query)}&format=json&limit=${home ? 10 : 5}&addressdetails=1&countrycodes=be,fr`;
+  if (home) {
+    // Boîte de ~40 km autour du point de référence. Passée en "hint"
+    // (pas de bounded=1) pour que les adresses lointaines restent trouvables
+    // mais soient rétrogradées.
+    const dLat = 40 / 111;
+    const dLng = 40 / (111 * Math.cos(home.lat * Math.PI / 180));
+    url += `&viewbox=${home.lng - dLng},${home.lat + dLat},${home.lng + dLng},${home.lat - dLat}`;
+  }
   const r = await fetch(url, { headers: { 'Accept-Language': 'fr' } });
   if (!r.ok) throw new Error('Recherche indisponible');
   const data = await r.json();
-  return data.map(x => ({ label: shortLabel(x), lat: parseFloat(x.lat), lng: parseFloat(x.lon) }));
+  let results = data.map(x => ({ label: shortLabel(x), lat: parseFloat(x.lat), lng: parseFloat(x.lon) }));
+  // Tri client par distance à vol d'oiseau au point de référence, pour garantir
+  // l'ordre quel que soit ce que Nominatim renvoie en premier.
+  if (home) {
+    const cosLat = Math.cos(home.lat * Math.PI / 180);
+    const distSq = (p) => {
+      const dLat = p.lat - home.lat;
+      const dLng = (p.lng - home.lng) * cosLat;
+      return dLat * dLat + dLng * dLng;
+    };
+    results.sort((a, b) => distSq(a) - distSq(b));
+  }
+  return results.slice(0, 5);
 }
 function shortLabel(x) {
   const a = x.address || {};
@@ -645,9 +668,23 @@ function shortLabel(x) {
   const num = a.house_number || '';
   const city = a.city || a.town || a.village || a.municipality || '';
   const pc = a.postcode || '';
-  const first = [num, road].filter(Boolean).join(' ');
-  const second = [pc, city].filter(Boolean).join(' ');
-  if (first || second) return [first, second].filter(Boolean).join(', ');
+  // Nom du POI si présent (magasin, enseigne, restaurant, école, pharmacie…).
+  // Nominatim met le nom du lieu dans x.name pour les points d'intérêt.
+  // Fallback : première partie de display_name si ce n'est pas juste un numéro
+  // ou une répétition de la rue.
+  let poiName = (x.name || '').trim();
+  if (!poiName && x.display_name) {
+    const first = x.display_name.split(',')[0].trim();
+    if (first && first !== road && !/^\d+[a-z]?$/i.test(first)) poiName = first;
+  }
+  if (poiName === road) poiName = '';
+  const addr = [num, road].filter(Boolean).join(' ');
+  const cityPart = [pc, city].filter(Boolean).join(' ');
+  const parts = [];
+  if (poiName) parts.push(poiName);
+  if (addr) parts.push(addr);
+  if (cityPart) parts.push(cityPart);
+  if (parts.length) return parts.join(', ');
   return x.display_name.split(',').slice(0, 3).join(',');
 }
 async function fetchMatrix(coords) {
@@ -839,10 +876,14 @@ async function planWeek(options = {}) {
     for (let day = 0; day < 5; day++) {
       if ((p.unavailableDays || []).includes(day)) continue;
       if (dayPlans[day].some(v => v.patientId === p.id)) continue;
+      const before = optimizeDayOrder(dayPlans[day], matrix, state.settings);
+      const beforeMin = before.valid ? before.dayMin : 0;
       const candidate = [...dayPlans[day], visit];
       const r = optimizeDayOrder(candidate, matrix, state.settings);
       if (!r.valid) continue;
-      let score = r.dayMin;
+      // Score = SURCOÛT (delta) : combien de minutes en plus l'ajout coûte ce jour-là.
+      // Un patient voisin d'un patient déjà planifié le même jour coûte quasi rien.
+      let score = r.dayMin - beforeMin;
       if (respectSpacing) {
         for (let d = 0; d < 5; d++) {
           if (d !== day && dayPlans[d].some(v => v.patientId === p.id)) {
@@ -859,8 +900,11 @@ async function planWeek(options = {}) {
     }
   }
 
+  // Passe d'amélioration : swaps inter-jours.
+  // Seuil abaissé de -5 min à -0.5 min pour permettre les micro-gains
+  // (typiquement quand deux voisins peuvent être regroupés).
   let improved = true, guard = 0;
-  while (improved && guard++ < 5) {
+  while (improved && guard++ < 10) {
     improved = false;
     outer: for (let d = 0; d < 5; d++) {
       for (let i = 0; i < dayPlans[d].length; i++) {
@@ -883,7 +927,7 @@ async function planWeek(options = {}) {
           trial[d2] = t2.order.map(x => ({ patientId: x.patientId, pinned: !!x.pinned, pinnedTime: x.pinnedTime }));
           const newTotal = totalMinAllDays(trial, matrix);
           const newSpacing = respectSpacing ? spacingPenalty(trial) : 0;
-          if ((newTotal + newSpacing) < (currentTotal + currentSpacing) - 5) {
+          if ((newTotal + newSpacing) < (currentTotal + currentSpacing) - 0.5) {
             dayPlans[d] = trial[d];
             dayPlans[d2] = trial[d2];
             improved = true;
@@ -891,6 +935,64 @@ async function planWeek(options = {}) {
           }
         }
       }
+    }
+  }
+
+  // Passe dédiée : regroupement des patients très proches (≤ 60 s de route
+  // entre leurs adresses). On les déplace sur le même jour tant que ça ne
+  // dégrade pas le trajet total, même quand le gain est nul — un détour
+  // gratuit reste un détour évité.
+  const NEIGHBOR_SECONDS = 60;
+  for (let a = 0; a < patients.length; a++) {
+    for (let b = a + 1; b < patients.length; b++) {
+      const pa = patients[a], pb = patients[b];
+      const idxA = patientIdx(pa.id) + 1;
+      const idxB = patientIdx(pb.id) + 1;
+      const drive = Math.min(matrix[idxA][idxB], matrix[idxB][idxA]);
+      if (drive > NEIGHBOR_SECONDS) continue;
+
+      // Où chacun est-il déjà planifié ?
+      const daysA = [], daysB = [];
+      for (let d = 0; d < 5; d++) {
+        if (dayPlans[d].some(v => v.patientId === pa.id)) daysA.push(d);
+        if (dayPlans[d].some(v => v.patientId === pb.id)) daysB.push(d);
+      }
+      if (daysA.length === 0 || daysB.length === 0) continue;
+
+      // Cherche à faire coïncider un jour de A avec un jour de B.
+      // On essaie les deux directions : déplacer B vers un jour de A,
+      // puis déplacer A vers un jour de B.
+      const tryMove = (mover, moverDays, targetDays) => {
+        for (const target of targetDays) {
+          for (const source of moverDays) {
+            if (source === target) return true; // déjà ensemble
+            if ((mover.unavailableDays || []).includes(target)) continue;
+            if (dayPlans[target].some(v => v.patientId === mover.id)) continue;
+            const bVisit = dayPlans[source].find(v => v.patientId === mover.id);
+            if (!bVisit || bVisit.pinned) continue;
+            const trial = dayPlans.map(dp => dp.slice());
+            trial[source] = trial[source].filter(v => v.patientId !== mover.id);
+            trial[target] = [...trial[target], { patientId: mover.id, pinned: false }];
+            const t1 = optimizeDayOrder(trial[source], matrix, state.settings);
+            const t2 = optimizeDayOrder(trial[target], matrix, state.settings);
+            if (!t1.valid || !t2.valid) continue;
+            trial[source] = t1.order.map(x => ({ patientId: x.patientId, pinned: !!x.pinned, pinnedTime: x.pinnedTime }));
+            trial[target] = t2.order.map(x => ({ patientId: x.patientId, pinned: !!x.pinned, pinnedTime: x.pinnedTime }));
+            const currentTotal = totalMinAllDays(dayPlans, matrix);
+            const newTotal = totalMinAllDays(trial, matrix);
+            // On accepte le regroupement tant que la dégradation reste sous 1 min
+            // (typiquement le regroupement gagne du temps, mais on tolère l'égalité).
+            if (newTotal <= currentTotal + 1) {
+              dayPlans[source] = trial[source];
+              dayPlans[target] = trial[target];
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+
+      if (!tryMove(pb, daysB, daysA)) tryMove(pa, daysA, daysB);
     }
   }
 
